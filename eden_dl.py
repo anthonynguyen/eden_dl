@@ -5,6 +5,7 @@ import json
 import os
 import readline
 import string
+import zipfile
 
 import requests
 
@@ -20,10 +21,9 @@ args = []
 
 def get_list():
     global allManga
+    print("Downloading list...")
     r = requests.get(LIST_URL)
     allManga = r.json()["manga"]
-
-    print("Downloading list...")
 
     try:
         f = open("list_cache.json", "w")
@@ -42,13 +42,7 @@ def read_list():
     except:
         get_list()
 
-_STATUSES = ["0", "Ongoing", "Completed"]
-
-def get_info():
-    if not len(args):
-        print("Usage: info <id>")
-        return
-
+def resolve_id():
     mID = None
 
     try:
@@ -64,6 +58,18 @@ def get_info():
                 mID = sID
                 break
 
+    return mID
+
+
+_STATUSES = ["0", "Ongoing", "Completed"]
+
+def get_info():
+    if not len(args):
+        print("Usage: info <id>")
+        return
+
+    mID = resolve_id()
+
     if not mID:
         print("Invalid ID")
         return
@@ -78,6 +84,84 @@ def get_info():
     print("Status: {}".format(_STATUSES[m["status"]]))
     print("Chapters: {}".format(m["chapters_len"]))
     print("Last updated: {}".format(datetime.datetime.fromtimestamp(int(m["last_chapter_date"])).strftime("%Y-%m-%d")))
+
+def get_chapters():
+    if len(args) < 1:
+        print("Usage: get <id> <chapters>")
+        return
+
+    mID = resolve_id()
+
+    if not mID:
+        print("Invalid ID")
+        return
+
+    r = requests.get(MANGA_URL.format(mID))
+    m = r.json()
+    slug = m["alias"]
+    chapters = m["chapters"]
+
+    if len(args) < 2 or args[1] == "all":
+        start = 1
+        end = len(chapters)
+    elif len(args) == 2:
+        try:
+            start = int(args[1])
+            end = start
+        except:
+            print("Invalid chapter")
+            return
+    else:
+        try:
+            start = int(args[1])
+            end = int(args[2])
+        except:
+            print("Invalid chapter")
+            return
+
+        if end < start:
+            print("Invalid chapter range")
+            return
+
+    start = start - 1
+    if start > len(chapters):
+        print("{} only has {} chapters".format(m["title"], len(chapters)))
+        return
+
+    if end > len(chapters):
+        end = len(chapters)
+
+    print("Getting chapters {} to {} of {}".format(start + 1, end, m["title"]))
+
+    chaptersASC = chapters[::-1]
+    toGet = chaptersASC[start:end]
+
+    if not os.path.exists("download/" + slug):
+        os.makedirs("download/" + slug)
+
+    digits = len(str(m["chapters_len"]))
+
+    for c in toGet:
+        cNum = c[0] # chapter num cause we narrowed the list down before
+        czip = zipfile.ZipFile("download/{}/{}_{}.zip".format(slug, slug, str(cNum).zfill(digits)), "w")
+
+        cR = requests.get(CHAPTER_URL.format(c[3]))
+        chapterImages = cR.json()["images"]
+
+        imgDigits = len(str(len(chapterImages)))
+        downloaded = 1
+
+        for n, i in enumerate(chapterImages):
+            imgID = i[0]
+
+            print("Downloading {} chapter {}... {}/{}".format(m["title"], cNum, downloaded, len(chapterImages)), end = "\r")
+
+            iReq = requests.get(IMAGE_URL.format(i[1]))
+            czip.writestr("{}.jpg".format(str(imgID).zfill(imgDigits)), iReq.content)
+
+            downloaded += 1
+
+        print("")
 
 
 def print_search_results():
@@ -123,6 +207,7 @@ if __name__ == "__main__":
         "exit": exit,
         "results": print_search_results,
         "info": get_info,
+        "get": get_chapters,
     }
 
     while True:
